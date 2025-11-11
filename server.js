@@ -35,6 +35,11 @@ function generateRoomId() {
   return Math.random().toString(36).substring(2, 8).toUpperCase();
 }
 
+// server.js
+app.get("/", (req, res) => {
+  res.send("✅ Backend API Render üzerinde çalışıyor!");
+});
+
 app.post("/registerUser", async (req, res) => {
   try {
     const { email, password, nickname } = req.body;
