@@ -40,6 +40,11 @@ app.get("/", (req, res) => {
   res.send("✅ Backend API Render üzerinde çalışıyor!");
 });
 
+app.get("/", (req, res) => {
+  console.log("✅ Ping alındı:", new Date().toLocaleString());
+  res.send("Sunucu aktif");
+});
+
 app.post("/registerUser", async (req, res) => {
   try {
     const { email, password, nickname } = req.body;
