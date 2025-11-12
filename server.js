@@ -402,13 +402,6 @@ io.on("connection", (socket) => {
   });
 });
 
-// server.js
-setInterval(() => {
-  fetch("https://number-secret-backend.onrender.com/")
-    .then(() => console.log("🔁 Ping atıldı - sunucu aktif tutuluyor"))
-    .catch(() => console.log("⚠️ Ping başarısız"));
-}, 5 * 60 * 1000); // her 5 dakikada bir
-
 // ======================= SERVER START =======================
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`Sunucu http://0.0.0.0:${PORT} üzerinde çalışıyor.`);
