@@ -2,12 +2,22 @@ const { initializeApp, cert } = require("firebase-admin/app");
 const { getFirestore } = require("firebase-admin/firestore");
 const fs = require("fs");
 
-// 🔹 Render ortamında dosya /etc/secrets altında
-const serviceAccountPath =
+let serviceAccountPath =
   process.env.FIREBASE_CREDENTIALS_PATH ||
-  "/etc/secrets/plus-minus-game-firebase-adminsdk-gu30l-4a0400b6ba.json";
+  "./plus-minus-game-firebase-adminsdk-gu30l-4a0400b6ba.json";
 
-const serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, "utf8"));
+let serviceAccount;
+
+try {
+  serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, "utf8"));
+  console.log(
+    "✅ Firebase servis hesabı başarıyla yüklendi:",
+    serviceAccountPath
+  );
+} catch (error) {
+  console.error("❌ Firebase servis hesabı yüklenemedi:", error.message);
+  process.exit(1); // Sunucu başlamasın
+}
 
 const app = initializeApp({
   credential: cert(serviceAccount),
