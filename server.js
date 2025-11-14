@@ -53,6 +53,29 @@ app.post("/registerUser", async (req, res) => {
       return res.status(400).json({ message: "Eksik bilgi gönderildi." });
     }
 
+    // Email format kontrolü
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({ message: "Geçerli bir email giriniz." });
+    }
+
+    console.log("🟦 Nickname kontrol başlıyor:", nickname);
+
+    const nicknameQuery = await db
+      .collection("users")
+      .where("nickname", "==", nickname)
+      .get();
+
+    console.log("🟩 Nickname sorgu sonucu boş mu =", nicknameQuery.empty);
+    console.log("🟩 Kaç adet eşleşen kullanıcı var:", nicknameQuery.size);
+
+    if (!nicknameQuery.empty) {
+      return res.status(409).json({
+        message: "Bu kullanıcı adı kullanılıyor, lütfen başka bir tane seçin.",
+      });
+    }
+
+    // Email unique check
     const userRef = db.collection("users").doc(email);
     const existingUser = await userRef.get();
 
@@ -60,7 +83,10 @@ app.post("/registerUser", async (req, res) => {
       return res.status(409).json({ message: "Bu email zaten kayıtlı." });
     }
 
+    // Password hash
     const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Yeni kullanıcı oluştur
     const newUser = {
       id: uuidv4(),
       email,
@@ -71,17 +97,22 @@ app.post("/registerUser", async (req, res) => {
     };
 
     await userRef.set(newUser);
-    console.log(`🟢 Yeni kullanıcı kaydı: ${email}`);
-    res
-      .status(201)
-      .json({ success: true, message: "Kayıt başarılı.", user: newUser });
+
+    res.status(201).json({
+      success: true,
+      message: "Kayıt başarılı.",
+      user: newUser,
+    });
   } catch (error) {
     console.error("Kayıt oluşturulurken hata:", error);
-    res.status(500).json({ message: "Kayıt başarısız.", error: error.message });
+    res.status(500).json({
+      message: "Kayıt başarısız.",
+      error: error.message,
+    });
   }
 });
 
-app.post("/logoutUsers", (req, res) => {
+app.post("/logoutUser", (req, res) => {
   try {
     console.log("🚪 Kullanıcı çıkış yaptı.");
     res.status(200).json({ success: true, message: "Çıkış başarılı." });
@@ -280,6 +311,11 @@ app.post("/create-room", (req, res) => {
 // ======================= SOCKET EVENTLER =======================
 io.on("connection", (socket) => {
   console.log("Yeni bağlantı:", socket.id);
+
+  socket.on("sendEmoji", ({ roomId, emoji }) => {
+    console.log(`🎭 Emoji gönderildi: ${emoji} → oda: ${roomId}`);
+    socket.to(roomId).emit("receiveEmoji", emoji);
+  });
 
   // 🏗️ Odaya katılma
   socket.on("joinRoom", ({ roomId, playerId, password }) => {
