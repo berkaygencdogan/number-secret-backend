@@ -419,6 +419,14 @@ io.on("connection", (socket) => {
 
   // ⚡ Hızlı giriş (şifresiz, başlamamış odalardan rastgele seçim)
   socket.on("quickJoin", ({ playerId }) => {
+    console.log("⚠ quickJoin playerId:", playerId);
+
+    if (!playerId) {
+      socket.emit("error", "Player ID alınamadı.");
+      console.log("❌ quickJoin reddedildi: PlayerId yok");
+      return;
+    }
+
     const availableRooms = Object.entries(rooms)
       .filter(([_, r]) => !r.password && !r.started)
       .map(([id]) => id);
