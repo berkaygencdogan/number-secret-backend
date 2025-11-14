@@ -25,14 +25,42 @@ app.use(cors());
 app.use(bodyParser.json());
 app.use(express.json());
 
-// ======================= MULTIPLAYER / SOCKET.IO =======================
-
-// Oda yapısı: { roomId: { players: [], targetNumber: "1234", password, started } }
 const rooms = {};
 
-// 🔹 Rastgele oda kodu
-function generateRoomId() {
-  return Math.random().toString(36).substring(2, 8).toUpperCase();
+function autoUpdateCan(user) {
+  const MAX_CAN = 5;
+  const INTERVAL = 10 * 60 * 1000; // 10 dakika
+
+  const now = Date.now();
+  const last = user.lastCanUpdate || now;
+
+  // Eğer zaten full ise hiç hesap yapma
+  if (user.can >= MAX_CAN) {
+    return {
+      can: MAX_CAN,
+      lastCanUpdate: last,
+    };
+  }
+
+  const elapsed = now - last;
+  const gained = Math.floor(elapsed / INTERVAL);
+
+  // Henüz can kazanacak kadar süre geçmemiş
+  if (gained <= 0) {
+    return {
+      can: user.can,
+      lastCanUpdate: last,
+    };
+  }
+
+  const newCan = Math.min(MAX_CAN, user.can + gained);
+
+  const newLast = newCan >= MAX_CAN ? now : last + gained * INTERVAL;
+
+  return {
+    can: newCan,
+    lastCanUpdate: newLast,
+  };
 }
 
 // server.js
@@ -158,9 +186,20 @@ app.get("/getUser", async (req, res) => {
       return res.status(404).json({ message: "Kullanıcı bulunamadı." });
     }
 
-    const userData = doc.data();
-    console.log(`✅ Kullanıcı verisi alındı: ${email}`);
-    res.status(200).json(userData);
+    let user = doc.data();
+
+    // CAN SİSTEMİ BURADA ÇALIŞIYOR 🔥
+    const updated = autoUpdateCan(user);
+
+    // Güncellenmiş değerleri Firestore’a yaz
+    await userRef.update(updated);
+
+    // Frontend'e gönder
+    user = { ...user, ...updated };
+
+    console.log(`🔋 Can güncellendi:`, updated);
+
+    res.status(200).json(user);
   } catch (error) {
     console.error("Kullanıcı verisi alınırken hata:", error);
     res.status(500).json({
