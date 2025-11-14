@@ -280,31 +280,60 @@ app.post("/updateUser", async (req, res) => {
 
 // 🔸 Oda oluşturma (şifreli veya şifresiz)
 app.post("/create-room", (req, res) => {
-  const { password, socketId } = req.body; // 👈 socket id'yi de alıyoruz
+  console.log("📥 /create-room endpoint çağrıldı");
+  console.log("➡ Gelen body:", req.body);
+
+  const { password, socketId, mode } = req.body;
   const roomId = Math.random().toString(36).substring(2, 8).toUpperCase();
-  const targetNumber = generateRandomNumber();
 
-  rooms[roomId] = {
-    players: [],
-    targetNumber,
-    password: password || null,
-    started: false,
-  };
+  console.log("🆕 Oluşturulan RoomID:", roomId);
 
-  console.log(
-    `Yeni oda oluşturuldu: ${roomId} | Şifre: ${
-      password || "Yok"
-    } | Hedef: ${targetNumber}`
-  );
+  let targetNumber = null;
 
-  // ✅ İlgili istemciye odayı bildir
+  if (mode === "online") {
+    console.log("🌐 ONLINE modda oda oluşturuluyor");
+
+    rooms[roomId] = {
+      mode: "online",
+      players: [],
+      targetNumber: null,
+      password: password || null,
+      started: false,
+      playerNumbers: {},
+      readyCount: 0,
+      turn: null,
+    };
+  } else {
+    console.log("🎮 CLASSIC modda oda oluşturuluyor");
+
+    targetNumber = generateRandomNumber();
+
+    rooms[roomId] = {
+      mode: "classic",
+      players: [],
+      targetNumber,
+      password: password || null,
+      started: false,
+    };
+
+    console.log("🎯 Classic Mod Target Number:", targetNumber);
+  }
+
+  // socket id geldiyse logla
+  console.log("🔌 socketId geldi mi?", socketId);
+
+  // Eğer socketId geldiyse client’a özel roomCreated gönder
   if (socketId) {
     const client = io.sockets.sockets.get(socketId);
     if (client) {
+      console.log("📤 roomCreated emit gönderildi:", roomId);
       client.emit("roomCreated", { roomId });
+    } else {
+      console.log("❌ socketId eşleşmedi, client bulunamadı");
     }
   }
 
+  console.log("📤 Response olarak roomId yollandı:", roomId);
   res.json({ roomId });
 });
 
@@ -315,6 +344,44 @@ io.on("connection", (socket) => {
   socket.on("sendEmoji", ({ roomId, emoji }) => {
     console.log(`🎭 Emoji gönderildi: ${emoji} → oda: ${roomId}`);
     socket.to(roomId).emit("receiveEmoji", emoji);
+  });
+
+  // 🎯 Oyuncu kendi gizli sayısını belirliyor
+  socket.on("setNumber", ({ roomId, playerId, number }) => {
+    const room = rooms[roomId];
+    if (!room) return;
+
+    // Kontroller
+    if (number.length !== 4) {
+      socket.emit("error", "Sayı 4 basamaklı olmalıdır.");
+      return;
+    }
+    if (number[0] === "0") {
+      socket.emit("error", "İlk basamak 0 olamaz.");
+      return;
+    }
+    if (new Set(number).size !== 4) {
+      socket.emit("error", "Tüm rakamlar farklı olmalıdır.");
+      return;
+    }
+
+    room.playerNumbers[playerId] = number;
+    room.readyCount++;
+
+    console.log(`🎯 Oyuncu ${playerId} gizli sayı belirledi → ${number}`);
+
+    // İki oyuncu da sayı belirlediyse oyun başlar
+    if (room.readyCount === 2) {
+      const firstPlayer = room.players[0].id;
+      room.turn = firstPlayer;
+
+      io.to(roomId).emit("bothReady");
+      io.to(roomId).emit("turn", room.turn);
+
+      console.log(
+        `🚀 Oda ${roomId}: Her iki oyuncu hazır. İlk sıra: ${firstPlayer}`
+      );
+    }
   });
 
   // 🏗️ Odaya katılma
@@ -331,6 +398,12 @@ io.on("connection", (socket) => {
       return;
     }
 
+    // 🔥 Online modda eski sayı verilerini sıfırla (ÇOOOOK ÖNEMLİ)
+    if (room.mode === "online") {
+      room.playerNumbers = {};
+      room.readyCount = 0;
+    }
+
     if (!room.players.find((p) => p.id === playerId)) {
       room.players.push({ id: playerId, socketId: socket.id });
     }
@@ -338,11 +411,9 @@ io.on("connection", (socket) => {
     socket.join(roomId);
     console.log(`Oyuncu ${playerId} odaya katıldı: ${roomId}`);
 
-    // İki oyuncu varsa oyunu başlat
     if (room.players.length === 2 && !room.started) {
       room.started = true;
       io.to(roomId).emit("gameStart");
-      console.log(`Oda ${roomId}: Oyun başlatıldı.`);
     }
   });
 
@@ -388,6 +459,49 @@ io.on("connection", (socket) => {
       socket.emit("error", "4 basamaklı sayı girin.");
       return;
     }
+
+    // ============================================================
+    // 🟦 MODE: ONLINE (SIRALI + HER OYUNCU KENDİ SAYISINI BELİRLER)
+    // ============================================================
+    if (room.mode === "online") {
+      // Sıra kontrolü
+      if (room.turn !== playerId) {
+        socket.emit("error", "Sıra sende değil!");
+        return;
+      }
+
+      // Rakibin gizli sayısını bul
+      const targetPlayer = room.players.find((p) => p.id !== playerId)?.id;
+      const targetNumber = room.playerNumbers[targetPlayer];
+
+      if (!targetNumber) {
+        socket.emit("error", "Rakibin sayısı henüz hazır değil.");
+        return;
+      }
+
+      // Plus/minus hesapla
+      const { plus, minus } = checkGuess(guess, targetNumber);
+
+      io.to(roomId).emit("newGuess", { playerId, guess, plus, minus });
+
+      // Kazandı mı?
+      if (plus === 4) {
+        io.to(roomId).emit("gameOver", { winnerId: playerId });
+        delete rooms[roomId];
+        return;
+      }
+
+      // Sıra değiştir
+      const otherPlayer = targetPlayer;
+      room.turn = otherPlayer;
+      io.to(roomId).emit("turn", otherPlayer);
+
+      return;
+    }
+
+    // ============================================================
+    // 🟩 MODE: CLASSIC (ORTAK TARGETNUMBER ÜZERİNDEN)
+    // ============================================================
 
     const { targetNumber } = room;
     const { plus, minus } = checkGuess(guess, targetNumber);
