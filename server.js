@@ -59,15 +59,10 @@ app.post("/registerUser", async (req, res) => {
       return res.status(400).json({ message: "Geçerli bir email giriniz." });
     }
 
-    console.log("🟦 Nickname kontrol başlıyor:", nickname);
-
     const nicknameQuery = await db
       .collection("users")
       .where("nickname", "==", nickname)
       .get();
-
-    console.log("🟩 Nickname sorgu sonucu boş mu =", nicknameQuery.empty);
-    console.log("🟩 Kaç adet eşleşen kullanıcı var:", nicknameQuery.size);
 
     if (!nicknameQuery.empty) {
       return res.status(409).json({
@@ -75,7 +70,6 @@ app.post("/registerUser", async (req, res) => {
       });
     }
 
-    // Email unique check
     const userRef = db.collection("users").doc(email);
     const existingUser = await userRef.get();
 
@@ -83,10 +77,8 @@ app.post("/registerUser", async (req, res) => {
       return res.status(409).json({ message: "Bu email zaten kayıtlı." });
     }
 
-    // Password hash
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Yeni kullanıcı oluştur
     const newUser = {
       id: uuidv4(),
       email,
@@ -280,19 +272,12 @@ app.post("/updateUser", async (req, res) => {
 
 // 🔸 Oda oluşturma (şifreli veya şifresiz)
 app.post("/create-room", (req, res) => {
-  console.log("📥 /create-room endpoint çağrıldı");
-  console.log("➡ Gelen body:", req.body);
-
   const { password, socketId, mode } = req.body;
   const roomId = Math.random().toString(36).substring(2, 8).toUpperCase();
-
-  console.log("🆕 Oluşturulan RoomID:", roomId);
 
   let targetNumber = null;
 
   if (mode === "online") {
-    console.log("🌐 ONLINE modda oda oluşturuluyor");
-
     rooms[roomId] = {
       mode: "online",
       players: [],
@@ -304,8 +289,6 @@ app.post("/create-room", (req, res) => {
       turn: null,
     };
   } else {
-    console.log("🎮 CLASSIC modda oda oluşturuluyor");
-
     targetNumber = generateRandomNumber();
 
     rooms[roomId] = {
@@ -315,25 +298,20 @@ app.post("/create-room", (req, res) => {
       password: password || null,
       started: false,
     };
-
-    console.log("🎯 Classic Mod Target Number:", targetNumber);
   }
 
   // socket id geldiyse logla
-  console.log("🔌 socketId geldi mi?", socketId);
 
   // Eğer socketId geldiyse client’a özel roomCreated gönder
   if (socketId) {
     const client = io.sockets.sockets.get(socketId);
     if (client) {
-      console.log("📤 roomCreated emit gönderildi:", roomId);
       client.emit("roomCreated", { roomId });
     } else {
       console.log("❌ socketId eşleşmedi, client bulunamadı");
     }
   }
 
-  console.log("📤 Response olarak roomId yollandı:", roomId);
   res.json({ roomId });
 });
 
@@ -468,9 +446,6 @@ io.on("connection", (socket) => {
       return;
     }
 
-    // ============================================================
-    // 🟦 MODE: ONLINE (SIRALI + HER OYUNCU KENDİ SAYISINI BELİRLER)
-    // ============================================================
     if (room.mode === "online") {
       // Sıra kontrolü
       if (room.turn !== playerId) {
@@ -514,14 +489,9 @@ io.on("connection", (socket) => {
     const { targetNumber } = room;
     const { plus, minus } = checkGuess(guess, targetNumber);
 
-    console.log(
-      `Oda ${roomId} | Oyuncu ${playerId} tahmin: ${guess} -> +${plus} -${minus}`
-    );
-
     io.to(roomId).emit("newGuess", { playerId, guess, plus, minus });
 
     if (plus === 4) {
-      console.log(`Oda ${roomId}: ${playerId} kazandı!`);
       io.to(roomId).emit("gameOver", { roomId, winnerId: playerId });
       delete rooms[roomId];
     }
