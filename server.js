@@ -73,6 +73,41 @@ app.get("/", (req, res) => {
   res.send("Sunucu aktif");
 });
 
+// 🔥 En iyi 10 oyuncuyu sıralayan endpoint
+app.get("/top-players", async (req, res) => {
+  try {
+    const snapshot = await db.collection("users").get();
+
+    const players = [];
+
+    snapshot.forEach((doc) => {
+      const data = doc.data();
+      if (data.nickname && typeof data.score === "number") {
+        players.push({
+          nickname: data.nickname,
+          score: data.score,
+          email: doc.id, // email doc id olarak tutuluyor
+        });
+      }
+    });
+
+    // Skora göre büyükten küçüğe sırala
+    const sorted = players.sort((a, b) => b.score - a.score);
+
+    // İlk 10'u al
+    const top10 = sorted.slice(0, 10);
+
+    res.status(200).json({
+      success: true,
+      top10,
+      allPlayers: sorted, // kullanıcı sırasını bulmak için
+    });
+  } catch (err) {
+    console.error("🔥 Sıralama hatası:", err);
+    res.status(500).json({ success: false, message: "Sıralama alınamadı." });
+  }
+});
+
 app.post("/registerUser", async (req, res) => {
   try {
     const { email, password, nickname } = req.body;
