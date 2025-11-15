@@ -178,9 +178,9 @@ app.post("/logoutUser", (req, res) => {
 
 app.post("/changeScore", async (req, res) => {
   try {
-    const { email, amount } = req.body;
+    const { email, scoreToAdd } = req.body;
 
-    if (!email || typeof amount !== "number") {
+    if (!email || typeof scoreToAdd !== "number") {
       return res
         .status(400)
         .json({ message: "Eksik veya hatalı veri gönderildi." });
@@ -194,15 +194,25 @@ app.post("/changeScore", async (req, res) => {
     }
 
     const currentScore = doc.data().score || 0;
-    await userRef.update({ score: currentScore + amount });
+    const newScore = currentScore + scoreToAdd;
 
-    console.log(`🏆 ${email} kullanıcısının skoru güncellendi: +${amount}`);
-    res.status(200).json({ success: true, message: "Skor güncellendi." });
+    await userRef.update({ score: newScore });
+
+    console.log(
+      `🏆 Skor güncellendi → ${email}: ${currentScore} → ${newScore}`
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "Skor güncellendi.",
+      newScore,
+    });
   } catch (error) {
     console.error("Skor güncellenirken hata:", error);
-    res
-      .status(500)
-      .json({ message: "Skor güncellenemedi.", error: error.message });
+    res.status(500).json({
+      message: "Skor güncellenemedi.",
+      error: error.message,
+    });
   }
 });
 
