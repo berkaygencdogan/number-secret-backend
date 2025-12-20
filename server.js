@@ -124,6 +124,7 @@ app.post("/registerUser", async (req, res) => {
       nickname,
       score: 0,
       can: 5,
+      lastCanUpdate: Date.now(),
     };
 
     await userRef.set(newUser);
@@ -131,6 +132,22 @@ app.post("/registerUser", async (req, res) => {
     res.status(201).json({ success: true, user: newUser });
   } catch (err) {
     res.status(500).json({ message: "Kayıt başarısız." });
+  }
+});
+
+app.post("/logoutUser", (req, res) => {
+  res.status(200).json({ success: true });
+});
+
+app.delete("/deleteUser", async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ message: "Email gerekli" });
+
+    await db.collection("users").doc(email).delete();
+    res.status(200).json({ success: true });
+  } catch {
+    res.status(500).json({ message: "Silme hatası" });
   }
 });
 
@@ -213,6 +230,29 @@ app.get("/getUser", async (req, res) => {
     res.json({ ...user, ...updated });
   } catch (err) {
     res.status(500).json({ message: "Hata oluştu." });
+  }
+});
+
+app.post("/updateUser", async (req, res) => {
+  try {
+    const { email, data } = req.body;
+
+    if (!email || !data) {
+      return res.status(400).json({ message: "Eksik veri" });
+    }
+
+    const userRef = db.collection("users").doc(email);
+    const doc = await userRef.get();
+
+    if (!doc.exists) {
+      return res.status(404).json({ message: "Kullanıcı bulunamadı" });
+    }
+
+    await userRef.update(data);
+
+    res.status(200).json({ success: true });
+  } catch (err) {
+    res.status(500).json({ message: "Update hatası" });
   }
 });
 
