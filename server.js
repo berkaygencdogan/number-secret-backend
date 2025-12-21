@@ -3,10 +3,8 @@ const http = require("http");
 const { Server } = require("socket.io");
 const cors = require("cors");
 const bodyParser = require("body-parser");
-const { v4: uuidv4 } = require("uuid");
-const bcrypt = require("bcrypt");
 
-const { db } = require("./Firebase");
+const { admin, db, auth } = require("./firebase");
 const checkGuess = require("./gameLogic");
 const generateRandomNumber = require("./numberGenerator");
 
@@ -28,6 +26,28 @@ app.use(express.json());
 
 const rooms = {};
 
+const authMiddleware = async (req, res, next) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader) return next(); // eski endpoint’ler için engelleme yok
+
+    const token = authHeader.split("Bearer ")[1];
+    if (!token) return next();
+
+    const decoded = await auth.verifyIdToken(token);
+    req.uid = decoded.uid;
+    next();
+  } catch (err) {
+    console.error("Auth middleware error:", err.message);
+    return res.status(401).json({ message: "Geçersiz token." });
+  }
+};
+
+app.use(authMiddleware);
+
+/* =========================================================
+   🔁 CAN AUTO UPDATE (AYNI)
+   ========================================================= */
 function autoUpdateCan(user) {
   const MAX_CAN = 5;
   const INTERVAL = 10 * 60 * 1000;
@@ -53,40 +73,13 @@ function autoUpdateCan(user) {
 }
 
 app.get("/", (req, res) => {
-  console.log("Ping:", new Date().toLocaleString());
   res.send("Sunucu aktif");
 });
 
-app.get("/top-players", async (req, res) => {
-  try {
-    const snapshot = await db.collection("users").get();
-    const players = [];
-
-    snapshot.forEach((doc) => {
-      const data = doc.data();
-      if (data.nickname && typeof data.score === "number") {
-        players.push({
-          nickname: data.nickname,
-          score: data.score,
-          email: doc.id,
-        });
-      }
-    });
-
-    const sorted = players.sort((a, b) => b.score - a.score);
-    const top10 = sorted.slice(0, 10);
-
-    res.status(200).json({
-      success: true,
-      top10,
-      allPlayers: sorted,
-    });
-  } catch (err) {
-    res.status(500).json({ success: false, message: "Sıralama alınamadı." });
-  }
-});
-
-app.post("/registerUser", async (req, res) => {
+/* =========================================================
+   📝 REGISTER (ZATEN DOĞRUYDU)
+   ========================================================= */
+app.post("/register", async (req, res) => {
   try {
     const { email, password, nickname } = req.body;
 
@@ -94,165 +87,118 @@ app.post("/registerUser", async (req, res) => {
       return res.status(400).json({ message: "Eksik bilgi." });
     }
 
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      return res.status(400).json({ message: "Geçersiz email." });
-    }
-
-    const nicknameQuery = await db
-      .collection("users")
-      .where("nickname", "==", nickname)
-      .get();
-
-    if (!nicknameQuery.empty) {
-      return res.status(409).json({ message: "Nickname kullanılıyor." });
-    }
-
-    const userRef = db.collection("users").doc(email);
-    const existingUser = await userRef.get();
-
-    if (existingUser.exists) {
-      return res.status(409).json({ message: "Email kayıtlı." });
-    }
-
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    const newUser = {
-      id: uuidv4(),
+    const userRecord = await auth.createUser({
       email,
-      password: hashedPassword,
+      password,
+      displayName: nickname,
+    });
+
+    const uid = userRecord.uid;
+
+    await db.collection("users").doc(uid).set({
+      uid,
+      email,
       nickname,
       score: 0,
       can: 5,
       lastCanUpdate: Date.now(),
-    };
+      createdAt: Date.now(),
+    });
 
-    await userRef.set(newUser);
-
-    res.status(201).json({ success: true, user: newUser });
+    res.status(201).json({ success: true });
   } catch (err) {
+    if (err.code === "auth/email-already-exists") {
+      return res.status(409).json({ message: "Email kayıtlı." });
+    }
     res.status(500).json({ message: "Kayıt başarısız." });
   }
 });
 
-app.post("/logoutUser", (req, res) => {
-  res.status(200).json({ success: true });
-});
-
-app.delete("/deleteUser", async (req, res) => {
+/* =========================================================
+   🔑 LOGIN (TOKEN)
+   ========================================================= */
+app.post("/login", async (req, res) => {
   try {
-    const { email } = req.body;
-    if (!email) return res.status(400).json({ message: "Email gerekli" });
+    const { token } = req.body;
+    if (!token) return res.status(400).json({ message: "Token gerekli." });
 
-    await db.collection("users").doc(email).delete();
-    res.status(200).json({ success: true });
+    const decoded = await auth.verifyIdToken(token);
+    const uid = decoded.uid;
+
+    const snap = await db.collection("users").doc(uid).get();
+    if (!snap.exists) {
+      return res.status(404).json({ message: "Kullanıcı yok." });
+    }
+
+    res.json({ success: true, user: snap.data() });
   } catch {
-    res.status(500).json({ message: "Silme hatası" });
+    res.status(401).json({ message: "Geçersiz token." });
   }
 });
 
-app.post("/loginUser", async (req, res) => {
+app.get("/getUser", authMiddleware, async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const ref = db.collection("users").doc(req.uid);
 
-    if (!email || !password) {
-      return res.status(400).json({ message: "Eksik bilgi." });
-    }
-
-    const userRef = db.collection("users").doc(email);
-    const doc = await userRef.get();
-
-    if (!doc.exists) {
-      return res.status(404).json({ message: "Kullanıcı yok." });
-    }
+    const doc = await ref.get();
+    if (!doc.exists) return res.status(404).json({ message: "Kullanıcı yok." });
 
     const user = doc.data();
-    const isMatch = await bcrypt.compare(password, user.password);
-
-    if (!isMatch) {
-      return res.status(401).json({ message: "Şifre hatalı." });
-    }
-
-    res.status(200).json({
-      success: true,
-      user: {
-        email: user.email,
-        nickname: user.nickname,
-        score: user.score,
-        can: user.can,
-      },
-    });
-  } catch (err) {
-    res.status(500).json({ message: "Giriş başarısız." });
-  }
-});
-
-app.post("/changeScore", async (req, res) => {
-  try {
-    const { email, scoreToAdd } = req.body;
-
-    if (!email || typeof scoreToAdd !== "number") {
-      return res.status(400).json({ message: "Hatalı veri." });
-    }
-
-    const userRef = db.collection("users").doc(email);
-    const doc = await userRef.get();
-
-    if (!doc.exists) {
-      return res.status(404).json({ message: "Kullanıcı yok." });
-    }
-
-    const newScore = (doc.data().score || 0) + scoreToAdd;
-    await userRef.update({ score: newScore });
-
-    res.json({ success: true, newScore });
-  } catch (err) {
-    res.status(500).json({ message: "Skor güncellenemedi." });
-  }
-});
-
-app.get("/getUser", async (req, res) => {
-  try {
-    const { email } = req.query;
-    if (!email) return res.status(400).json({ message: "Email gerekli." });
-
-    const userRef = db.collection("users").doc(email);
-    const doc = await userRef.get();
-
-    if (!doc.exists) {
-      return res.status(404).json({ message: "Kullanıcı yok." });
-    }
-
-    let user = doc.data();
     const updated = autoUpdateCan(user);
-    await userRef.update(updated);
+
+    await ref.update(updated);
 
     res.json({ ...user, ...updated });
-  } catch (err) {
+  } catch {
     res.status(500).json({ message: "Hata oluştu." });
   }
 });
 
-app.post("/updateUser", async (req, res) => {
+app.post("/changeScore", authMiddleware, async (req, res) => {
   try {
-    const { email, data } = req.body;
+    const { scoreToAdd } = req.body;
+    if (typeof scoreToAdd !== "number")
+      return res.status(400).json({ message: "Hatalı skor." });
 
-    if (!email || !data) {
-      return res.status(400).json({ message: "Eksik veri" });
-    }
+    const ref = db.collection("users").doc(req.uid);
+    const doc = await ref.get();
 
-    const userRef = db.collection("users").doc(email);
-    const doc = await userRef.get();
+    if (!doc.exists) return res.status(404).json({ message: "Kullanıcı yok." });
 
-    if (!doc.exists) {
-      return res.status(404).json({ message: "Kullanıcı bulunamadı" });
-    }
+    const newScore = (doc.data().score || 0) + scoreToAdd;
+    await ref.update({ score: newScore });
 
-    await userRef.update(data);
+    res.json({ success: true, newScore });
+  } catch {
+    res.status(500).json({ message: "Skor güncellenemedi." });
+  }
+});
 
-    res.status(200).json({ success: true });
-  } catch (err) {
-    res.status(500).json({ message: "Update hatası" });
+app.post("/updateUser", authMiddleware, async (req, res) => {
+  try {
+    const { data } = req.body;
+    if (!data) return res.status(400).json({ message: "Eksik veri." });
+
+    const ref = db.collection("users").doc(req.uid);
+    const doc = await ref.get();
+
+    if (!doc.exists) return res.status(404).json({ message: "Kullanıcı yok." });
+
+    await ref.update(data);
+    res.json({ success: true });
+  } catch {
+    res.status(500).json({ message: "Update hatası." });
+  }
+});
+
+app.delete("/deleteUser", authMiddleware, async (req, res) => {
+  try {
+    await db.collection("users").doc(req.uid).delete();
+    await auth.deleteUser(req.uid);
+
+    res.json({ success: true });
+  } catch {
+    res.status(500).json({ message: "Silme hatası." });
   }
 });
 

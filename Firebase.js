@@ -1,28 +1,13 @@
-const { initializeApp, cert } = require("firebase-admin/app");
-const { getFirestore } = require("firebase-admin/firestore");
-const fs = require("fs");
+const admin = require("firebase-admin");
+const serviceAccount = require("./plus-minus-game-firebase-adminsdk-gu30l-4a0400b6ba.json");
 
-let serviceAccountPath =
-  process.env.FIREBASE_CREDENTIALS_PATH ||
-  "./plus-minus-game-firebase-adminsdk-gu30l-4a0400b6ba.json";
-
-let serviceAccount;
-
-try {
-  serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, "utf8"));
-  console.log(
-    "✅ Firebase servis hesabı başarıyla yüklendi:",
-    serviceAccountPath
-  );
-} catch (error) {
-  console.error("❌ Firebase servis hesabı yüklenemedi:", error.message);
-  process.exit(1); // Sunucu başlamasın
+if (!admin.apps.length) {
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount),
+  });
 }
 
-const app = initializeApp({
-  credential: cert(serviceAccount),
-});
+const db = admin.firestore();
+const auth = admin.auth();
 
-const db = getFirestore(app);
-
-module.exports = { db };
+module.exports = { admin, db, auth };
