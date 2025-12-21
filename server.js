@@ -53,9 +53,14 @@ function autoUpdateCan(user) {
   const INTERVAL = 10 * 60 * 1000;
 
   const now = Date.now();
-  const last = user.lastCanUpdate || now;
 
-  if (user.can >= MAX_CAN) {
+  // 🔥 KRİTİK KORUMA
+  const last =
+    typeof user.lastCanUpdate === "number" ? user.lastCanUpdate : now;
+
+  const currentCan = typeof user.can === "number" ? user.can : MAX_CAN;
+
+  if (currentCan >= MAX_CAN) {
     return { can: MAX_CAN, lastCanUpdate: last };
   }
 
@@ -63,13 +68,16 @@ function autoUpdateCan(user) {
   const gained = Math.floor(elapsed / INTERVAL);
 
   if (gained <= 0) {
-    return { can: user.can, lastCanUpdate: last };
+    return { can: currentCan, lastCanUpdate: last };
   }
 
-  const newCan = Math.min(MAX_CAN, user.can + gained);
+  const newCan = Math.min(MAX_CAN, currentCan + gained);
   const newLast = newCan >= MAX_CAN ? now : last + gained * INTERVAL;
 
-  return { can: newCan, lastCanUpdate: newLast };
+  return {
+    can: newCan,
+    lastCanUpdate: newLast,
+  };
 }
 
 app.get("/", (req, res) => {
@@ -114,9 +122,49 @@ app.post("/register", async (req, res) => {
   }
 });
 
-/* =========================================================
-   🔑 LOGIN (TOKEN)
-   ========================================================= */
+app.get("/top-players", async (req, res) => {
+  try {
+    const snapshot = await db.collection("users").get();
+
+    const players = [];
+
+    snapshot.forEach((doc) => {
+      const data = doc.data();
+
+      // Güvenlik: eksik veri varsa alma
+      if (
+        typeof data.nickname === "string" &&
+        typeof data.score === "number" &&
+        typeof data.email === "string"
+      ) {
+        players.push({
+          uid: doc.id,
+          email: data.email,
+          nickname: data.nickname,
+          score: data.score,
+        });
+      }
+    });
+
+    // Skora göre büyükten küçüğe sırala
+    players.sort((a, b) => b.score - a.score);
+
+    const top10 = players.slice(0, 10);
+
+    res.status(200).json({
+      success: true,
+      top10,
+      allPlayers: players,
+    });
+  } catch (error) {
+    console.error("❌ /top-players error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Leaderboard alınamadı.",
+    });
+  }
+});
+
 app.post("/login", async (req, res) => {
   try {
     const { token } = req.body;
@@ -137,7 +185,9 @@ app.post("/login", async (req, res) => {
 });
 
 app.get("/getUser", authMiddleware, async (req, res) => {
+  console.log("object");
   try {
+    console.log("backend girdi");
     const ref = db.collection("users").doc(req.uid);
 
     const doc = await ref.get();
@@ -145,7 +195,7 @@ app.get("/getUser", authMiddleware, async (req, res) => {
 
     const user = doc.data();
     const updated = autoUpdateCan(user);
-
+    console.log("updated", updated);
     await ref.update(updated);
 
     res.json({ ...user, ...updated });
@@ -202,13 +252,42 @@ app.delete("/deleteUser", authMiddleware, async (req, res) => {
   }
 });
 
+app.get("/rooms", (req, res) => {
+  try {
+    const roomList = Object.entries(rooms).map(([roomId, room]) => {
+      return {
+        roomId,
+        // classic → multiplayer, online → online
+        mode: room.mode === "classic" ? "multiplayer" : "online",
+        difficulty: room.difficulty || "easy",
+        players: room.players?.length || 0,
+        hasPassword: !!room.password,
+      };
+    });
+
+    res.status(200).json(roomList);
+  } catch (err) {
+    console.error("ROOM LIST ERROR:", err);
+    res.status(500).json([]);
+  }
+});
+
 app.post("/create-room", (req, res) => {
   const { password, socketId, mode } = req.body;
   const roomId = Math.random().toString(36).substring(2, 8).toUpperCase();
 
   rooms[roomId] =
-    mode === "online"
+    mode === "multiplayer"
       ? {
+          // REKABET MODU
+          mode: "classic",
+          players: [],
+          targetNumber: generateRandomNumber(),
+          password: password || null,
+          started: false,
+        }
+      : {
+          // ONLINE MOD
           mode: "online",
           players: [],
           password: password || null,
@@ -216,13 +295,6 @@ app.post("/create-room", (req, res) => {
           playerNumbers: {},
           readyCount: 0,
           turn: null,
-        }
-      : {
-          mode: "classic",
-          players: [],
-          targetNumber: generateRandomNumber(),
-          password: password || null,
-          started: false,
         };
 
   if (socketId) {
@@ -231,6 +303,49 @@ app.post("/create-room", (req, res) => {
   }
 
   res.json({ roomId });
+});
+
+app.post("/rewardCan", authMiddleware, async (req, res) => {
+  try {
+    if (!req.uid) {
+      return res.status(401).json({ message: "Auth gerekli" });
+    }
+
+    const ref = db.collection("users").doc(req.uid);
+    const doc = await ref.get();
+
+    if (!doc.exists) {
+      return res.status(404).json({ message: "Kullanıcı yok" });
+    }
+
+    const user = doc.data();
+    const MAX_CAN = 5;
+
+    if (user.can >= MAX_CAN) {
+      return res.json({ can: user.can, user });
+    }
+
+    const newCan = user.can + 1;
+
+    await ref.update({
+      can: newCan,
+      lastCanUpdate: Date.now(),
+    });
+
+    const updatedUser = {
+      ...user,
+      can: newCan,
+      lastCanUpdate: Date.now(),
+    };
+
+    res.json({
+      can: newCan,
+      user: updatedUser,
+    });
+  } catch (err) {
+    console.error("rewardCan error:", err);
+    res.status(500).json({ message: "Reward can error" });
+  }
 });
 
 io.on("connection", (socket) => {
@@ -246,20 +361,25 @@ io.on("connection", (socket) => {
       return socket.emit("error", "Şifre yanlış.");
     }
 
-    if (room.mode === "online") {
-      room.playerNumbers = {};
-      room.readyCount = 0;
-    }
-
+    // Oyuncuyu ekle
     if (!room.players.find((p) => p.id === playerId)) {
       room.players.push({ id: playerId, socketId: socket.id });
     }
 
+    // 🔥 ÖNCE JOIN
     socket.join(roomId);
 
+    // 🔥 CLIENT’A ONAY
+    socket.emit("joinedRoom", { roomId });
+
+    // 🔥 KRİTİK: gameStart’i BİR TIK GECİKTİR
     if (room.players.length === 2 && !room.started) {
       room.started = true;
-      io.to(roomId).emit("gameStart");
+
+      setTimeout(() => {
+        io.to(roomId).emit("gameStart", { roomId });
+        console.log("GAME START EMITTED TO:", roomId);
+      }, 100); // 100ms yeterli
     }
   });
 
@@ -278,10 +398,50 @@ io.on("connection", (socket) => {
     }
   });
 
+  // 📄 server.js
+  // 📄 server.js
+  socket.on("setNumber", ({ roomId, playerId, number }) => {
+    const room = rooms[roomId];
+    if (!room || room.mode !== "online") return;
+
+    console.log("SET NUMBER:", roomId, playerId, number);
+
+    // 🔒 Aynı oyuncu tekrar göndermesin
+    if (room.playerNumbers[playerId]) return;
+
+    // Kaydet
+    room.playerNumbers[playerId] = number;
+    room.readyCount += 1;
+
+    // 🧠 İki oyuncu da hazır mı?
+    if (room.readyCount === 2) {
+      // İlk başlayan rastgele
+      const firstPlayer =
+        room.players[Math.floor(Math.random() * room.players.length)].id;
+
+      room.turn = firstPlayer;
+
+      // 🔥 HERKESE BİLDİR
+      io.to(roomId).emit("bothReady");
+      io.to(roomId).emit("turn", firstPlayer);
+
+      console.log("BOTH READY → TURN:", firstPlayer);
+    }
+  });
+
   socket.on("disconnect", () => {
     Object.entries(rooms).forEach(([roomId, room]) => {
+      const before = room.players.length;
+
       room.players = room.players.filter((p) => p.socketId !== socket.id);
-      if (room.players.length === 0) delete rooms[roomId];
+
+      if (before !== room.players.length) {
+        socket.to(roomId).emit("playerLeft");
+      }
+
+      if (room.players.length === 0) {
+        delete rooms[roomId];
+      }
     });
   });
 });
