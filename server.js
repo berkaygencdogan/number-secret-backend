@@ -257,8 +257,7 @@ app.get("/rooms", (req, res) => {
     const roomList = Object.entries(rooms).map(([roomId, room]) => {
       return {
         roomId,
-        // classic → multiplayer, online → online
-        mode: room.mode === "classic" ? "multiplayer" : "online",
+        mode: room.mode === "multiplayer" ? "multiplayer" : "online",
         difficulty: room.difficulty || "easy",
         players: room.players?.length || 0,
         hasPassword: !!room.password,
@@ -273,29 +272,49 @@ app.get("/rooms", (req, res) => {
 });
 
 app.post("/create-room", (req, res) => {
-  const { password, socketId, mode } = req.body;
+  const { password, socketId, mode, difficulty } = req.body;
   const roomId = Math.random().toString(36).substring(2, 8).toUpperCase();
+  console.log("mode ve zorluk", mode, difficulty);
+  if (mode === "multiplayer") {
+    rooms[roomId] = {
+      // 👥 REKABET MODU
+      mode: "multiplayer",
+      players: [],
+      targetNumber: generateRandomNumber(),
+      password: password || null,
+      started: false,
+      difficulty: difficulty || "easy",
+    };
+  } else if (mode === "online") {
+    rooms[roomId] = {
+      // 🌐 ONLINE MOD
+      mode: "online",
+      difficulty: difficulty || "easy",
+      players: [],
+      password: password || null,
+      started: false,
+      playerNumbers: {},
+      readyCount: 0,
+      turn: null,
+    };
+  } else if (mode === "single") {
+    rooms[roomId] = {
+      mode: "single",
+      difficulty,
+      targetNumber: generateRandomNumber(),
+      players: [{ id: playerId, socketId }],
+      started: true,
+      attempts: 0, // 🔥 EKLE
+    };
+  }
 
-  rooms[roomId] =
-    mode === "multiplayer"
-      ? {
-          // REKABET MODU
-          mode: "classic",
-          players: [],
-          targetNumber: generateRandomNumber(),
-          password: password || null,
-          started: false,
-        }
-      : {
-          // ONLINE MOD
-          mode: "online",
-          players: [],
-          password: password || null,
-          started: false,
-          playerNumbers: {},
-          readyCount: 0,
-          turn: null,
-        };
+  if (mode === "multiplayer") {
+    console.log(
+      `🎯 ROOM ${roomId} TARGET NUMBER →`,
+      rooms[roomId].targetNumber,
+      `(difficulty: ${rooms[roomId].difficulty})`
+    );
+  }
 
   if (socketId) {
     const client = io.sockets.sockets.get(socketId);
@@ -353,6 +372,26 @@ io.on("connection", (socket) => {
     socket.to(roomId).emit("receiveEmoji", emoji);
   });
 
+  socket.on("createSingleRoom", ({ playerId, difficulty }, callback) => {
+    const roomId = Math.random().toString(36).substring(2, 8).toUpperCase();
+
+    rooms[roomId] = {
+      mode: "single",
+      difficulty: difficulty || "easy",
+      targetNumber: generateRandomNumber(),
+      players: [{ id: playerId, socketId: socket.id }],
+      started: true,
+      attempts: 0,
+    };
+
+    socket.join(roomId);
+
+    console.log("🎮 SINGLE ROOM CREATED →", roomId, difficulty);
+
+    // 🔥 CALLBACK İLE GERİ DÖN
+    callback({ roomId });
+  });
+
   socket.on("joinRoom", ({ roomId, playerId, password }) => {
     const room = rooms[roomId];
     if (!room) return socket.emit("error", "Oda yok.");
@@ -361,45 +400,142 @@ io.on("connection", (socket) => {
       return socket.emit("error", "Şifre yanlış.");
     }
 
-    // Oyuncuyu ekle
     if (!room.players.find((p) => p.id === playerId)) {
       room.players.push({ id: playerId, socketId: socket.id });
     }
 
-    // 🔥 ÖNCE JOIN
     socket.join(roomId);
 
-    // 🔥 CLIENT’A ONAY
-    socket.emit("joinedRoom", { roomId });
+    // ✅ MODE + DIFFICULTY GÖNDER
+    socket.emit("joinedRoom", {
+      roomId,
+      mode: room.mode, // 🔥 EKLENDİ
+      difficulty: room.difficulty, // 🔥 EKLENDİ
+    });
 
-    // 🔥 KRİTİK: gameStart’i BİR TIK GECİKTİR
+    // 🎮 GAME START
     if (room.players.length === 2 && !room.started) {
       room.started = true;
 
       setTimeout(() => {
-        io.to(roomId).emit("gameStart", { roomId });
-        console.log("GAME START EMITTED TO:", roomId);
-      }, 100); // 100ms yeterli
+        io.to(roomId).emit("gameStart", {
+          roomId,
+          mode: room.mode, // 🔥 EKLENDİ
+          difficulty: room.difficulty, // 🔥 EKLENDİ
+        });
+
+        console.log(
+          "GAME START →",
+          roomId,
+          "MODE:",
+          room.mode,
+          "DIFFICULTY:",
+          room.difficulty
+        );
+      }, 100);
     }
   });
 
-  socket.on("guess", ({ roomId, guess, playerId }) => {
+  socket.on("guess", async ({ roomId, guess, playerId }) => {
     const room = rooms[roomId];
     if (!room) return;
 
-    if (room.mode === "classic") {
-      const { plus, minus } = checkGuess(guess, room.targetNumber);
-      io.to(roomId).emit("newGuess", { playerId, guess, plus, minus });
+    // ONLINE modda sıra kontrolü
+    if (room.mode === "online" && room.turn !== playerId) return;
 
-      if (plus === 4) {
-        io.to(roomId).emit("gameOver", { winnerId: playerId });
-        delete rooms[roomId];
+    let targetNumber;
+    let opponentId = null;
+
+    if (room.mode === "multiplayer" || room.mode === "single") {
+      targetNumber = room.targetNumber;
+      opponentId = room.players.find((p) => p.id !== playerId)?.id || null;
+    } else if (room.mode === "online") {
+      opponentId = Object.keys(room.playerNumbers).find(
+        (id) => id !== playerId
+      );
+      targetNumber = room.playerNumbers[opponentId];
+    }
+
+    if (!targetNumber) return;
+
+    room.attempts = (room.attempts || 0) + 1;
+
+    const { plus, minus } = checkGuess(guess, targetNumber);
+
+    let colors = null;
+    if (room.difficulty === "easy") {
+      colors = guess
+        .split("")
+        .map((d, i) =>
+          d === targetNumber[i]
+            ? "green"
+            : targetNumber.includes(d)
+            ? "yellow"
+            : "red"
+        );
+    }
+
+    io.to(roomId).emit("newGuess", {
+      playerId,
+      guess,
+      plus,
+      minus,
+      colors,
+      attempts: room.attempts, // UI isterse kullanır
+    });
+
+    if (plus === 4) {
+      io.to(roomId).emit("gameOver", { winnerId: playerId });
+
+      const scoreToAdd = room.difficulty === "hard" ? 200 : 100;
+
+      try {
+        // single + multiplayer → kazanırsa puan
+        if (room.mode !== "online" || opponentId) {
+          await db
+            .collection("users")
+            .doc(playerId)
+            .update({
+              score: admin.firestore.FieldValue.increment(scoreToAdd),
+            });
+
+          console.log(
+            `🏆 SCORE +${scoreToAdd} →`,
+            playerId,
+            `(mode:${room.mode}, difficulty:${room.difficulty})`
+          );
+        }
+      } catch (err) {
+        console.error("❌ SCORE UPDATE ERROR:", err.message);
       }
+
+      delete rooms[roomId];
+      return;
+    }
+
+    if (room.attempts >= 8) {
+      let winnerId = null;
+
+      // online / multiplayer → rakip kazanır
+      if (room.mode !== "single" && opponentId) {
+        winnerId = opponentId;
+      }
+
+      io.to(roomId).emit("gameOver", { winnerId });
+
+      delete rooms[roomId];
+      return;
+    }
+
+    /* ===============================
+     🔁 ONLINE MOD SIRA
+     =============================== */
+    if (room.mode === "online" && opponentId) {
+      room.turn = opponentId;
+      io.to(roomId).emit("turn", opponentId);
     }
   });
 
-  // 📄 server.js
-  // 📄 server.js
   socket.on("setNumber", ({ roomId, playerId, number }) => {
     const room = rooms[roomId];
     if (!room || room.mode !== "online") return;
@@ -427,6 +563,64 @@ io.on("connection", (socket) => {
 
       console.log("BOTH READY → TURN:", firstPlayer);
     }
+  });
+  socket.on("leaveRoom", async (roomId) => {
+    const room = rooms[roomId];
+    if (!room) return;
+
+    // çıkan oyuncuyu bul
+    const leavingPlayer = room.players.find((p) => p.socketId === socket.id);
+
+    // oyuncuyu odadan çıkar
+    room.players = room.players.filter((p) => p.socketId !== socket.id);
+
+    socket.leave(roomId);
+
+    /* ===============================
+     👤 SINGLE MODE
+     =============================== */
+    if (room.mode === "single") {
+      // tek oyuncu çıktı → puan YOK
+      delete rooms[roomId];
+      console.log("🗑 SINGLE ROOM LEFT:", roomId);
+      return;
+    }
+
+    /* ===============================
+     🏆 KARŞI TARAF VARSA → O KAZANIR
+     =============================== */
+    if (room.players.length === 1 && leavingPlayer) {
+      const winnerId = room.players[0].id;
+
+      io.to(roomId).emit("gameOver", {
+        winnerId,
+        reason: "player_left",
+      });
+
+      // 🔥 ZORLUKA GÖRE PUAN
+      const scoreToAdd = room.difficulty === "hard" ? 200 : 100;
+
+      try {
+        const ref = db.collection("users").doc(winnerId);
+        await ref.update({
+          score: admin.firestore.FieldValue.increment(scoreToAdd),
+        });
+
+        console.log(
+          `🏆 SCORE +${scoreToAdd} →`,
+          winnerId,
+          `(leaveRoom, difficulty: ${room.difficulty})`
+        );
+      } catch (err) {
+        console.error("❌ SCORE UPDATE ERROR:", err.message);
+      }
+    }
+
+    /* ===============================
+     🗑 ODAYI SİL
+     =============================== */
+    delete rooms[roomId];
+    console.log("🗑 ROOM DELETED:", roomId);
   });
 
   socket.on("disconnect", () => {
