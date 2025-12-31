@@ -196,7 +196,12 @@ app.get("/getUser", authMiddleware, async (req, res) => {
     const user = doc.data();
     const updated = autoUpdateCan(user);
     console.log("updated", updated);
-    await ref.update(updated);
+    if (
+      updated.can !== user.can ||
+      updated.lastCanUpdate !== user.lastCanUpdate
+    ) {
+      await ref.update(updated);
+    }
 
     res.json({ ...user, ...updated });
   } catch {
@@ -370,6 +375,75 @@ app.post("/rewardCan", authMiddleware, async (req, res) => {
 io.on("connection", (socket) => {
   socket.on("sendEmoji", ({ roomId, emoji }) => {
     socket.to(roomId).emit("receiveEmoji", emoji);
+  });
+
+  socket.on("findMatch", ({ playerId, difficulty, mode }) => {
+    if (mode !== "multiplayer") return;
+
+    console.log("🔍 FIND MATCH:", playerId, "difficulty:", difficulty);
+
+    // 1️⃣ Uygun oda ara
+    const existingRoomId = Object.keys(rooms).find((roomId) => {
+      const room = rooms[roomId];
+      return (
+        room.mode === "multiplayer" &&
+        room.difficulty === difficulty &&
+        room.players.length === 1 &&
+        room.started === false
+      );
+    });
+
+    // 2️⃣ ODA VAR → KATIL
+    if (existingRoomId) {
+      const room = rooms[existingRoomId];
+
+      room.players.push({
+        id: playerId,
+        socketId: socket.id,
+      });
+
+      socket.join(existingRoomId);
+
+      room.started = true;
+
+      console.log("✅ MATCH FOUND → JOIN:", existingRoomId);
+
+      io.to(existingRoomId).emit("gameStart", {
+        roomId: existingRoomId,
+        mode: room.mode,
+        difficulty: room.difficulty,
+      });
+
+      return;
+    }
+
+    // 3️⃣ ODA YOK → OLUŞTUR
+    const roomId = Math.random().toString(36).substring(2, 8).toUpperCase();
+
+    rooms[roomId] = {
+      mode: "multiplayer",
+      difficulty,
+      players: [
+        {
+          id: playerId,
+          socketId: socket.id,
+        },
+      ],
+      targetNumber: generateRandomNumber(),
+      started: false,
+      password: null,
+    };
+
+    socket.join(roomId);
+
+    console.log(
+      "🆕 ROOM CREATED FOR MATCH:",
+      roomId,
+      "difficulty:",
+      difficulty,
+      "target:",
+      rooms[roomId].targetNumber
+    );
   });
 
   socket.on("createSingleRoom", ({ playerId, difficulty }, callback) => {
