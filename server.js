@@ -4,7 +4,7 @@ const { Server } = require("socket.io");
 const cors = require("cors");
 const bodyParser = require("body-parser");
 
-const { admin, db, auth } = require("./Firebase");
+const { admin, db, auth } = require("./firebase");
 const checkGuess = require("./gameLogic");
 const generateRandomNumber = require("./numberGenerator");
 
