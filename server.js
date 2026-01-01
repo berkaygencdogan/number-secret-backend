@@ -4,7 +4,7 @@ const { Server } = require("socket.io");
 const cors = require("cors");
 const bodyParser = require("body-parser");
 
-const { admin, db, auth } = require("./firebase");
+const { admin, db, auth } = require("./Firebase");
 const checkGuess = require("./gameLogic");
 const generateRandomNumber = require("./numberGenerator");
 
@@ -395,7 +395,6 @@ io.on("connection", (socket) => {
       mode,
     });
 
-    // 🔒 Sadece multiplayer eşleşme
     if (mode !== "multiplayer") {
       console.log("⛔ MODE REDDEDİLDİ:", mode);
       return;
@@ -412,9 +411,6 @@ io.on("connection", (socket) => {
       );
     });
 
-    /* ===============================
-     🤝 ODA VAR → KATIL
-     =============================== */
     if (existingRoomId) {
       const room = rooms[existingRoomId];
 
@@ -438,9 +434,6 @@ io.on("connection", (socket) => {
       return;
     }
 
-    /* ===============================
-     🆕 ODA YOK → OLUŞTUR
-     =============================== */
     const roomId = Math.random().toString(36).substring(2, 8).toUpperCase();
 
     rooms[roomId] = {
@@ -466,7 +459,6 @@ io.on("connection", (socket) => {
       difficulty
     );
 
-    // ⏳ SADECE ODAYI OLUŞTURAN KİŞİYE
     socket.emit("waitingForOpponent", {
       roomId,
       difficulty,
