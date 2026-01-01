@@ -373,51 +373,74 @@ app.post("/rewardCan", authMiddleware, async (req, res) => {
 });
 
 io.on("connection", (socket) => {
+  console.log("🔌 CONNECT:", socket.id);
+
+  socket.onAny((event, ...args) => {
+    console.log("📡 EVENT:", event, "FROM:", socket.id, "DATA:", args);
+  });
+
+  socket.on("disconnect", (reason) => {
+    console.log("❌ DISCONNECT:", socket.id, "REASON:", reason);
+  });
+
   socket.on("sendEmoji", ({ roomId, emoji }) => {
     socket.to(roomId).emit("receiveEmoji", emoji);
   });
 
   socket.on("findMatch", ({ playerId, difficulty, mode }) => {
-    if (mode !== "multiplayer") return;
+    console.log("🔍 FIND MATCH:", {
+      socketId: socket.id,
+      playerId,
+      difficulty,
+      mode,
+    });
 
-    console.log("🔍 FIND MATCH:", playerId, "difficulty:", difficulty);
+    // 🔒 Sadece multiplayer eşleşme
+    if (mode !== "multiplayer") {
+      console.log("⛔ MODE REDDEDİLDİ:", mode);
+      return;
+    }
 
-    // 1️⃣ Uygun oda ara
+    // 1️⃣ Uygun bekleyen oda ara
     const existingRoomId = Object.keys(rooms).find((roomId) => {
       const room = rooms[roomId];
       return (
         room.mode === "multiplayer" &&
         room.difficulty === difficulty &&
-        room.players.length === 1 &&
-        room.started === false
+        room.started === false &&
+        room.players.length === 1
       );
     });
 
-    // 2️⃣ ODA VAR → KATIL
+    /* ===============================
+     🤝 ODA VAR → KATIL
+     =============================== */
     if (existingRoomId) {
       const room = rooms[existingRoomId];
+
+      console.log("🤝 MATCH FOUND → JOIN ROOM:", existingRoomId);
 
       room.players.push({
         id: playerId,
         socketId: socket.id,
       });
 
+      room.started = true;
       socket.join(existingRoomId);
 
-      room.started = true;
-
-      console.log("✅ MATCH FOUND → JOIN:", existingRoomId);
-
+      // 🎮 HERKESE GAME START
       io.to(existingRoomId).emit("gameStart", {
         roomId: existingRoomId,
-        mode: room.mode,
+        mode: "multiplayer",
         difficulty: room.difficulty,
       });
 
       return;
     }
 
-    // 3️⃣ ODA YOK → OLUŞTUR
+    /* ===============================
+     🆕 ODA YOK → OLUŞTUR
+     =============================== */
     const roomId = Math.random().toString(36).substring(2, 8).toUpperCase();
 
     rooms[roomId] = {
@@ -437,13 +460,17 @@ io.on("connection", (socket) => {
     socket.join(roomId);
 
     console.log(
-      "🆕 ROOM CREATED FOR MATCH:",
+      "🆕 ROOM CREATED & WAITING:",
       roomId,
       "difficulty:",
-      difficulty,
-      "target:",
-      rooms[roomId].targetNumber
+      difficulty
     );
+
+    // ⏳ SADECE ODAYI OLUŞTURAN KİŞİYE
+    socket.emit("waitingForOpponent", {
+      roomId,
+      difficulty,
+    });
   });
 
   socket.on("createSingleRoom", ({ playerId, difficulty }, callback) => {
