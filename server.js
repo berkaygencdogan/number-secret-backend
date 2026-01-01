@@ -185,9 +185,7 @@ app.post("/login", async (req, res) => {
 });
 
 app.get("/getUser", authMiddleware, async (req, res) => {
-  console.log("object");
   try {
-    console.log("backend girdi");
     const ref = db.collection("users").doc(req.uid);
 
     const doc = await ref.get();
@@ -195,7 +193,6 @@ app.get("/getUser", authMiddleware, async (req, res) => {
 
     const user = doc.data();
     const updated = autoUpdateCan(user);
-    console.log("updated", updated);
     if (
       updated.can !== user.can ||
       updated.lastCanUpdate !== user.lastCanUpdate
