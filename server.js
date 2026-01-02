@@ -43,11 +43,12 @@ const authMiddleware = async (req, res, next) => {
   }
 };
 
-app.use(authMiddleware);
+app.get("/getUser", authMiddleware);
+app.post("/changeScore", authMiddleware);
+app.post("/updateUser", authMiddleware);
+app.delete("/deleteUser", authMiddleware);
+app.post("/rewardCan", authMiddleware);
 
-/* =========================================================
-   🔁 CAN AUTO UPDATE (AYNI)
-   ========================================================= */
 function autoUpdateCan(user) {
   const MAX_CAN = 5;
   const INTERVAL = 10 * 60 * 1000;
@@ -167,17 +168,21 @@ app.get("/top-players", async (req, res) => {
 
 app.post("/login", async (req, res) => {
   try {
+    console.log("LOGIN HEADERS:", req.headers);
+
     const authHeader = req.headers.authorization;
-    if (!authHeader)
+    if (!authHeader) {
+      console.log("❌ Authorization header yok");
       return res.status(400).json({ message: "Authorization header yok." });
+    }
 
     const token = authHeader.replace("Bearer ", "");
-    if (!token) return res.status(400).json({ message: "Token yok." });
+    console.log("LOGIN TOKEN:", token?.slice(0, 20));
 
     const decoded = await auth.verifyIdToken(token);
-    const uid = decoded.uid;
+    console.log("DECODED UID:", decoded.uid);
 
-    const snap = await db.collection("users").doc(uid).get();
+    const snap = await db.collection("users").doc(decoded.uid).get();
     if (!snap.exists) {
       return res.status(404).json({ message: "Kullanıcı yok." });
     }
