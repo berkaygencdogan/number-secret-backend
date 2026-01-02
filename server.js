@@ -167,8 +167,12 @@ app.get("/top-players", async (req, res) => {
 
 app.post("/login", async (req, res) => {
   try {
-    const { token } = req.body;
-    if (!token) return res.status(400).json({ message: "Token gerekli." });
+    const authHeader = req.headers.authorization;
+    if (!authHeader)
+      return res.status(400).json({ message: "Authorization header yok." });
+
+    const token = authHeader.replace("Bearer ", "");
+    if (!token) return res.status(400).json({ message: "Token yok." });
 
     const decoded = await auth.verifyIdToken(token);
     const uid = decoded.uid;
@@ -179,7 +183,8 @@ app.post("/login", async (req, res) => {
     }
 
     res.json({ success: true, user: snap.data() });
-  } catch {
+  } catch (err) {
+    console.error("LOGIN ERROR:", err.message);
     res.status(401).json({ message: "Geçersiz token." });
   }
 });
