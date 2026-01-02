@@ -168,29 +168,46 @@ app.get("/top-players", async (req, res) => {
 
 app.post("/login", async (req, res) => {
   try {
-    console.log("LOGIN HEADERS:", req.headers);
+    // 1️⃣ Önce body'den dene (senin frontend böyle gönderiyor)
+    let token = req.body?.token;
+    console.log("LOGIN TOKEN (final):", token?.slice(0, 20));
 
-    const authHeader = req.headers.authorization;
-    if (!authHeader) {
-      console.log("❌ Authorization header yok");
-      return res.status(400).json({ message: "Authorization header yok." });
+    // 2️⃣ Body yoksa header'dan dene (ileride socket/auth için hazır)
+    if (!token) {
+      const authHeader = req.headers.authorization;
+      if (authHeader?.startsWith("Bearer ")) {
+        token = authHeader.replace("Bearer ", "");
+      }
     }
 
-    const token = authHeader.replace("Bearer ", "");
-    console.log("LOGIN TOKEN:", token?.slice(0, 20));
+    if (!token) {
+      return res.status(400).json({
+        success: false,
+        message: "Token bulunamadı.",
+      });
+    }
 
     const decoded = await auth.verifyIdToken(token);
-    console.log("DECODED UID:", decoded.uid);
+    const uid = decoded.uid;
 
-    const snap = await db.collection("users").doc(decoded.uid).get();
+    const snap = await db.collection("users").doc(uid).get();
     if (!snap.exists) {
-      return res.status(404).json({ message: "Kullanıcı yok." });
+      return res.status(404).json({
+        success: false,
+        message: "Kullanıcı yok.",
+      });
     }
 
-    res.json({ success: true, user: snap.data() });
+    res.json({
+      success: true,
+      user: snap.data(),
+    });
   } catch (err) {
     console.error("LOGIN ERROR:", err.message);
-    res.status(401).json({ message: "Geçersiz token." });
+    res.status(401).json({
+      success: false,
+      message: "Geçersiz token.",
+    });
   }
 });
 
