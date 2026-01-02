@@ -403,10 +403,6 @@ io.on("connection", (socket) => {
     console.log("📡 EVENT:", event, "FROM:", socket.id, "DATA:", args);
   });
 
-  socket.on("disconnect", (reason) => {
-    console.log("❌ DISCONNECT:", socket.id, "REASON:", reason);
-  });
-
   socket.on("sendEmoji", ({ roomId, emoji }) => {
     socket.to(roomId).emit("receiveEmoji", emoji);
   });
@@ -733,27 +729,8 @@ io.on("connection", (socket) => {
       }
     }
 
-    /* ===============================
-     🗑 ODAYI SİL
-     =============================== */
     delete rooms[roomId];
     console.log("🗑 ROOM DELETED:", roomId);
-  });
-
-  socket.on("disconnect", () => {
-    Object.entries(rooms).forEach(([roomId, room]) => {
-      const before = room.players.length;
-
-      room.players = room.players.filter((p) => p.socketId !== socket.id);
-
-      if (before !== room.players.length) {
-        socket.to(roomId).emit("playerLeft");
-      }
-
-      if (room.players.length === 0) {
-        delete rooms[roomId];
-      }
-    });
   });
 });
 
