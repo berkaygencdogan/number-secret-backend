@@ -174,7 +174,6 @@ app.post("/login", async (req, res) => {
   try {
     // 1️⃣ Önce body'den dene (senin frontend böyle gönderiyor)
     let token = req.body?.token;
-    console.log("LOGIN TOKEN (final):", token?.slice(0, 20));
 
     // 2️⃣ Body yoksa header'dan dene (ileride socket/auth için hazır)
     if (!token) {
@@ -401,7 +400,13 @@ app.post("/rewardCan", authMiddleware, async (req, res) => {
 });
 
 io.on("connection", (socket) => {
-  console.log("🔌 CONNECT:", socket.id);
+  const uid = socket.handshake.auth?.uid;
+
+  if (uid) {
+    console.log(`🔌 SOCKET CONNECTED → uid: ${uid} | socketId: ${socket.id}`);
+  } else {
+    console.log(`🔌 SOCKET CONNECTED → uid: UNKNOWN | socketId: ${socket.id}`);
+  }
 
   socket.on("sendEmoji", ({ roomId, emoji }) => {
     socket.to(roomId).emit("receiveEmoji", emoji);
@@ -589,6 +594,7 @@ io.on("connection", (socket) => {
     }
 
     io.to(roomId).emit("newGuess", {
+      roomId,
       playerId,
       guess,
       plus,
