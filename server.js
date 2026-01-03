@@ -13,16 +13,20 @@ const PORT = process.env.PORT || 5000;
 const app = express();
 const server = http.createServer(app);
 
+app.use(cors());
+app.use(bodyParser.json());
+app.use(express.json());
+
 const io = new Server(server, {
   cors: {
     origin: "*",
     methods: ["GET", "POST"],
   },
+  transports: ["websocket", "polling"],
+  allowUpgrades: true,
+  pingInterval: 25000,
+  pingTimeout: 20000,
 });
-
-app.use(cors());
-app.use(bodyParser.json());
-app.use(express.json());
 
 const rooms = {};
 
@@ -398,10 +402,6 @@ app.post("/rewardCan", authMiddleware, async (req, res) => {
 
 io.on("connection", (socket) => {
   console.log("🔌 CONNECT:", socket.id);
-
-  socket.onAny((event, ...args) => {
-    console.log("📡 EVENT:", event, "FROM:", socket.id, "DATA:", args);
-  });
 
   socket.on("sendEmoji", ({ roomId, emoji }) => {
     socket.to(roomId).emit("receiveEmoji", emoji);
